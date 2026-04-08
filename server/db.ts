@@ -1,38 +1,31 @@
 /**
  * SQLite 초기화 및 스키마.
  *
- * - 단일 PPTEZ 프로젝트 = 단일 db 파일 (`.omc/pptez.db`)
+ * - 단일 프로젝트 = 단일 db 파일 (`.omc/presentation.db`)
  * - bun:sqlite 사용 (의존성 0)
  * - 노드 트리 (frame/text/image), 스파스 키프레임, 에셋, 메타
  */
 
 import { Database } from 'bun:sqlite'
-import { existsSync, mkdirSync, renameSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 
 // bun:sqlite의 db.run/db.query 가변인자에 들어갈 수 있는 값
 type SqliteParam = string | number | bigint | boolean | null | Uint8Array
 
-const DB_PATH = resolve(process.cwd(), '.omc/pptez.db')
-const LEGACY_DB_PATH = resolve(process.cwd(), '.omc/presentation.db')
+const DB_PATH = resolve(process.cwd(), '.omc/presentation.db')
+const LEGACY_DB_PATH = resolve(process.cwd(), '.omc/pptez.db')
 
 let _db: Database | null = null
 
 export function getDb(): Database {
   if (_db) return _db
   mkdirSync(dirname(DB_PATH), { recursive: true })
-  // 구 파일명 마이그레이션: presentation.db → pptez.db (한 번만)
-  if (!existsSync(DB_PATH) && existsSync(LEGACY_DB_PATH)) {
-    renameSync(LEGACY_DB_PATH, DB_PATH)
-    // WAL 사이드카도 같이 옮김
-    for (const suffix of ['-wal', '-shm']) {
-      const from = LEGACY_DB_PATH + suffix
-      const to = DB_PATH + suffix
-      if (existsSync(from)) renameSync(from, to)
-    }
-    console.log('[pptez] migrated .omc/presentation.db → .omc/pptez.db')
-  }
-  const db = new Database(DB_PATH, { create: true })
+  // 파일명을 런타임에 옮기지 말고, 기존 presentation.db를 우선 사용한다.
+  // 과거 pptez.db만 남아있는 경우엔 그 파일을 그대로 연다.
+  const dbPath =
+    existsSync(DB_PATH) || !existsSync(LEGACY_DB_PATH) ? DB_PATH : LEGACY_DB_PATH
+  const db = new Database(dbPath, { create: true })
   db.exec('PRAGMA journal_mode = WAL;')
   db.exec('PRAGMA foreign_keys = ON;')
   initSchema(db)
@@ -51,20 +44,29 @@ function initSchema(db: Database) {
     CREATE TABLE IF NOT EXISTS elements (
       id            TEXT PRIMARY KEY,
       parent_id     TEXT,
-      type          TEXT NOT NULL CHECK(type IN ('frame', 'text', 'image')),
+      type          TEXT NOT NULL,
       name          TEXT,
       z_index       INTEGER NOT NULL DEFAULT 0,
 
       -- 정적 속성 (애니메이션 안 됨)
+      subtype       TEXT,
       text_content  TEXT,
-      text_split    TEXT CHECK(text_split IN ('none','char','word','line') OR text_split IS NULL),
+      text_split    TEXT,
       font_weight   INTEGER,
       text_align    TEXT,
       image_src     TEXT,
 
+      -- Auto layout (frame only)
+      layout_mode    TEXT,
+      layout_gap     REAL,
+      layout_padding REAL,
+      layout_align   TEXT,
+      layout_justify TEXT,
+
       -- Stagger modifier
       child_stagger        REAL,
       child_stagger_order  TEXT,
+      child_motion_preset  TEXT,
 
       created_at    INTEGER NOT NULL,
       FOREIGN KEY (parent_id) REFERENCES elements(id) ON DELETE CASCADE
@@ -82,10 +84,19 @@ function initSchema(db: Database) {
       opacity       REAL,
       rotate        REAL,
       scale         REAL,
+      skew_x        REAL,
+      skew_y        REAL,
       bg_color      TEXT,
       fg_color      TEXT,
       border_radius REAL,
       font_size     REAL,
+      blur          REAL,
+      shadow        TEXT,
+      border_width  REAL,
+      border_color  TEXT,
+      text_content  TEXT,
+      duration      REAL,
+      ease          TEXT,
       PRIMARY KEY (element_id, step),
       FOREIGN KEY (element_id) REFERENCES elements(id) ON DELETE CASCADE
     );
@@ -101,6 +112,44 @@ function initSchema(db: Database) {
       created_at    INTEGER NOT NULL
     );
   `)
+
+  // 기존 db에 컬럼이 없으면 ALTER TABLE로 추가 (idempotent)
+  ensureColumns(db, 'elements', [
+    ['subtype', 'TEXT'],
+    ['layout_mode', 'TEXT'],
+    ['layout_gap', 'REAL'],
+    ['layout_padding', 'REAL'],
+    ['layout_align', 'TEXT'],
+    ['layout_justify', 'TEXT'],
+    ['child_motion_preset', 'TEXT'],
+  ])
+  ensureColumns(db, 'keyframes', [
+    ['skew_x', 'REAL'],
+    ['skew_y', 'REAL'],
+    ['blur', 'REAL'],
+    ['shadow', 'TEXT'],
+    ['border_width', 'REAL'],
+    ['border_color', 'TEXT'],
+    ['text_content', 'TEXT'],
+    ['duration', 'REAL'],
+    ['ease', 'TEXT'],
+  ])
+}
+
+function ensureColumns(
+  db: Database,
+  table: string,
+  cols: ReadonlyArray<readonly [string, string]>,
+) {
+  const existing = db.query(`PRAGMA table_info(${table})`).all() as {
+    name: string
+  }[]
+  const have = new Set(existing.map((c) => c.name))
+  for (const [name, type] of cols) {
+    if (!have.has(name)) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`)
+    }
+  }
 }
 
 function seedDefaults(db: Database) {
@@ -128,13 +177,20 @@ export interface ElementRow {
   type: ElementType
   name: string | null
   z_index: number
+  subtype: string | null
   text_content: string | null
   text_split: TextSplit | null
   font_weight: number | null
   text_align: string | null
   image_src: string | null
+  layout_mode: string | null
+  layout_gap: number | null
+  layout_padding: number | null
+  layout_align: string | null
+  layout_justify: string | null
   child_stagger: number | null
   child_stagger_order: string | null
+  child_motion_preset: string | null
   created_at: number
 }
 
@@ -148,10 +204,19 @@ export interface KeyframeRow {
   opacity: number | null
   rotate: number | null
   scale: number | null
+  skew_x: number | null
+  skew_y: number | null
   bg_color: string | null
   fg_color: string | null
   border_radius: number | null
   font_size: number | null
+  blur: number | null
+  shadow: string | null
+  border_width: number | null
+  border_color: string | null
+  text_content: string | null
+  duration: number | null
+  ease: string | null
 }
 
 export interface AssetRow {
@@ -205,13 +270,20 @@ const ELEMENT_COLUMNS = [
   'type',
   'name',
   'z_index',
+  'subtype',
   'text_content',
   'text_split',
   'font_weight',
   'text_align',
   'image_src',
+  'layout_mode',
+  'layout_gap',
+  'layout_padding',
+  'layout_align',
+  'layout_justify',
   'child_stagger',
   'child_stagger_order',
+  'child_motion_preset',
   'created_at',
 ] as const
 
@@ -246,13 +318,20 @@ export function upsertElement(input: Partial<ElementRow> & { id: string }): Elem
       type: (input.type ?? 'frame') as ElementType,
       name: input.name ?? null,
       z_index: input.z_index ?? 0,
+      subtype: input.subtype ?? null,
       text_content: input.text_content ?? null,
       text_split: (input.text_split ?? null) as TextSplit | null,
       font_weight: input.font_weight ?? null,
       text_align: input.text_align ?? null,
       image_src: input.image_src ?? null,
+      layout_mode: input.layout_mode ?? null,
+      layout_gap: input.layout_gap ?? null,
+      layout_padding: input.layout_padding ?? null,
+      layout_align: input.layout_align ?? null,
+      layout_justify: input.layout_justify ?? null,
       child_stagger: input.child_stagger ?? null,
       child_stagger_order: input.child_stagger_order ?? null,
+      child_motion_preset: input.child_motion_preset ?? null,
       created_at: Date.now(),
     }
     const insertValues = ELEMENT_COLUMNS.map(
@@ -281,10 +360,19 @@ const KEYFRAME_COLUMNS = [
   'opacity',
   'rotate',
   'scale',
+  'skew_x',
+  'skew_y',
   'bg_color',
   'fg_color',
   'border_radius',
   'font_size',
+  'blur',
+  'shadow',
+  'border_width',
+  'border_color',
+  'text_content',
+  'duration',
+  'ease',
 ] as const
 
 export function upsertKeyframe(

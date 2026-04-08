@@ -8,6 +8,20 @@
 
 export type ElementType = 'frame' | 'text' | 'image'
 export type TextSplit = 'none' | 'char' | 'word' | 'line'
+export type LayoutMode = 'none' | 'row' | 'column'
+export type LayoutAlign = 'start' | 'center' | 'end' | 'stretch'
+export type LayoutJustify = 'start' | 'center' | 'end' | 'between' | 'around'
+export type FrameSubtype = 'rect' | 'ellipse'
+export type ChildMotionPreset =
+  | 'none'
+  | 'fade'
+  | 'slide-up'
+  | 'slide-down'
+  | 'slide-left'
+  | 'slide-right'
+  | 'scale'
+  | 'pop'
+  | 'blur'
 
 export interface ElementRow {
   id: string
@@ -15,13 +29,20 @@ export interface ElementRow {
   type: ElementType
   name: string | null
   z_index: number
+  subtype: string | null
   text_content: string | null
   text_split: TextSplit | null
   font_weight: number | null
   text_align: string | null
   image_src: string | null
+  layout_mode: string | null
+  layout_gap: number | null
+  layout_padding: number | null
+  layout_align: string | null
+  layout_justify: string | null
   child_stagger: number | null
   child_stagger_order: string | null
+  child_motion_preset: string | null
   created_at: number
 }
 
@@ -35,10 +56,19 @@ export interface KeyframeRow {
   opacity: number | null
   rotate: number | null
   scale: number | null
+  skew_x: number | null
+  skew_y: number | null
   bg_color: string | null
   fg_color: string | null
   border_radius: number | null
   font_size: number | null
+  blur: number | null
+  shadow: string | null
+  border_width: number | null
+  border_color: string | null
+  text_content: string | null
+  duration: number | null
+  ease: string | null
 }
 
 export interface AssetRow {
@@ -60,6 +90,7 @@ export interface Scene {
 }
 
 // 키프레임의 애니메이션 가능한 속성 키
+// text_content는 별도 트랙(보간 없음)
 export type AnimatableKey =
   | 'x'
   | 'y'
@@ -68,10 +99,16 @@ export type AnimatableKey =
   | 'opacity'
   | 'rotate'
   | 'scale'
+  | 'skew_x'
+  | 'skew_y'
   | 'bg_color'
   | 'fg_color'
   | 'border_radius'
   | 'font_size'
+  | 'blur'
+  | 'shadow'
+  | 'border_width'
+  | 'border_color'
 
 export const ANIMATABLE_KEYS: AnimatableKey[] = [
   'x',
@@ -81,8 +118,14 @@ export const ANIMATABLE_KEYS: AnimatableKey[] = [
   'opacity',
   'rotate',
   'scale',
+  'skew_x',
+  'skew_y',
   'bg_color',
   'fg_color',
   'border_radius',
   'font_size',
+  'blur',
+  'shadow',
+  'border_width',
+  'border_color',
 ]
