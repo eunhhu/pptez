@@ -4,19 +4,10 @@ import {
   setMeta,
   useScene,
   useDuration,
-  useEase,
   createElement,
   setSelection,
 } from '../scene/store'
-
-const EASE_PRESETS: Record<string, [number, number, number, number]> = {
-  'out-quart': [0.22, 1, 0.36, 1],
-  linear: [0, 0, 1, 1],
-  ease: [0.25, 0.1, 0.25, 1],
-  'in-out-cubic': [0.65, 0, 0.35, 1],
-  'spring-ish': [0.34, 1.56, 0.64, 1],
-  'in-quart': [0.5, 0, 0.75, 0],
-}
+import { EASE_PRESET_NAMES } from '../scene/easing'
 
 interface TopbarProps {
   step: number
@@ -27,13 +18,10 @@ interface TopbarProps {
 export function Topbar({ step, total, setStep }: TopbarProps) {
   const scene = useScene()
   const duration = useDuration()
-  const ease = useEase()
+  const easeRaw = scene?.meta.ease ?? '[0.22,1,0.36,1]'
 
-  // 현재 ease가 어느 preset과 일치하는지 찾기
-  const easeName =
-    Object.entries(EASE_PRESETS).find(
-      ([, v]) => JSON.stringify(v) === JSON.stringify(ease),
-    )?.[0] ?? 'custom'
+  // ease 메타가 named preset 이름이면 그대로, 그 외엔 'custom'
+  const easeName = EASE_PRESET_NAMES.includes(easeRaw) ? easeRaw : 'custom'
 
   const addStep = () => {
     setMeta('total_steps', String(total + 1))
@@ -129,13 +117,13 @@ export function Topbar({ step, total, setStep }: TopbarProps) {
           <select
             value={easeName === 'custom' ? '' : easeName}
             onChange={(e) => {
-              const v = EASE_PRESETS[e.target.value]
-              if (v) setMeta('ease', JSON.stringify(v))
+              const v = e.target.value
+              if (v) setMeta('ease', v)
             }}
-            className="rounded border border-white/10 bg-zinc-950 px-1 py-0.5 text-xs text-zinc-200"
+            className="max-w-[140px] rounded border border-white/10 bg-zinc-950 px-1 py-0.5 text-xs text-zinc-200"
           >
             {easeName === 'custom' ? <option value="">custom</option> : null}
-            {Object.keys(EASE_PRESETS).map((name) => (
+            {EASE_PRESET_NAMES.map((name) => (
               <option key={name} value={name}>
                 {name}
               </option>

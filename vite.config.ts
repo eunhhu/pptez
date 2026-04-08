@@ -15,6 +15,6 @@ export default defineConfig({
   server: {
     host: true, // 0.0.0.0 바인딩 → 같은 네트워크 기기에서 접속 가능
     port: 5173,
-    strictPort: false,
+    strictPort: true,
   },
 })

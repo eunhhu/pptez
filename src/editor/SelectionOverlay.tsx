@@ -17,6 +17,7 @@ import {
   upsertKeyframe,
   getScene,
   setSelection,
+  clearSelection,
 } from '../scene/store'
 import { computeValuesAt } from '../scene/interpolate'
 import { CANVAS_WIDTH, CANVAS_HEIGHT } from '../scene/Stage'
@@ -37,13 +38,20 @@ interface SelectionOverlayProps {
 
 type DragMode =
   | { kind: 'none' }
-  | { kind: 'move'; startX: number; startY: number; rects: Map<string, Rect> }
+  | {
+      kind: 'move'
+      startX: number
+      startY: number
+      renderedRects: Map<string, Rect>
+      localRects: Map<string, Rect>
+    }
   | {
       kind: 'resize'
       handle: HandleId
       startX: number
       startY: number
-      rects: Map<string, Rect>
+      renderedRects: Map<string, Rect>
+      localRects: Map<string, Rect>
     }
   | {
       kind: 'marquee'
@@ -59,15 +67,8 @@ export function SelectionOverlay({ step, frameRef }: SelectionOverlayProps) {
   const scene = useScene()
   const selection = useSelection()
   const overlayRef = useRef<HTMLDivElement | null>(null)
+  const backgroundRef = useRef<HTMLDivElement | null>(null)
   const [drag, setDrag] = useState<DragMode>({ kind: 'none' })
-
-  // 캔버스 → 화면 배율
-  const getScale = (): number => {
-    const node = frameRef.current
-    if (!node) return 1
-    const rect = node.getBoundingClientRect()
-    return rect.width / CANVAS_WIDTH
-  }
 
   // 화면 좌표 → 캔버스 가상 좌표 (좌상단 기준)
   const screenToCanvas = (clientX: number, clientY: number): { x: number; y: number } => {
@@ -81,8 +82,21 @@ export function SelectionOverlay({ step, frameRef }: SelectionOverlayProps) {
     }
   }
 
-  // 선택된 요소들의 현재 effective rect 계산
-  const getRect = (el: ElementRow): Rect => {
+  const domRectToCanvas = (rect: DOMRect | ClientRect): Rect => {
+    const node = frameRef.current
+    if (!node) return { x: 0, y: 0, width: 0, height: 0 }
+    const frame = node.getBoundingClientRect()
+    const s = frame.width / CANVAS_WIDTH
+    return {
+      x: (rect.left - frame.left) / s,
+      y: (rect.top - frame.top) / s,
+      width: rect.width / s,
+      height: rect.height / s,
+    }
+  }
+
+  // 요소 자신의 local rect
+  const getLocalRect = (el: ElementRow): Rect => {
     const kfs = scene?.keyframes.filter((k) => k.element_id === el.id) ?? []
     const v = computeValuesAt(kfs, step)
     return {
@@ -90,6 +104,84 @@ export function SelectionOverlay({ step, frameRef }: SelectionOverlayProps) {
       y: typeof v.y === 'number' ? v.y : 0,
       width: typeof v.width === 'number' ? v.width : 200,
       height: typeof v.height === 'number' ? v.height : 80,
+    }
+  }
+
+  // store 기준 fallback rect
+  const getSceneCanvasRect = (
+    el: ElementRow,
+    previewRects?: Map<string, Rect>,
+  ): Rect => {
+    const preview = previewRects?.get(el.id)
+    if (preview) return preview
+
+    const local = getLocalRect(el)
+    if (!scene || !el.parent_id) return local
+
+    const parent = scene.elements.find((e) => e.id === el.parent_id)
+    if (!parent) return local
+
+    const parentRect = getSceneCanvasRect(parent, previewRects)
+    return {
+      ...local,
+      x: parentRect.x + local.x,
+      y: parentRect.y + local.y,
+    }
+  }
+
+  const getRenderedCanvasRect = (el: ElementRow): Rect => {
+    const node = document.querySelector(
+      `[data-stage-id="${el.id}"]`,
+    ) as HTMLElement | null
+    if (!node) return getSceneCanvasRect(el)
+    return domRectToCanvas(node.getBoundingClientRect())
+  }
+
+  const hitStageIdAtPoint = (clientX: number, clientY: number): string | null => {
+    const bg = backgroundRef.current
+    if (!bg) return null
+    const prev = bg.style.pointerEvents
+    bg.style.pointerEvents = 'none'
+    const hit = document.elementFromPoint(clientX, clientY) as HTMLElement | null
+    bg.style.pointerEvents = prev
+    return hit?.closest<HTMLElement>('[data-stage-id]')?.dataset.stageId ?? null
+  }
+
+  const applyOverlayRect = (id: string, rect: Rect) => {
+    const el = overlayRef.current?.querySelector(
+      `[data-sel-id="${id}"]`,
+    ) as HTMLElement | null
+    if (!el) return
+    el.style.left = `${rect.x}px`
+    el.style.top = `${rect.y}px`
+    el.style.width = `${rect.width}px`
+    el.style.height = `${rect.height}px`
+    el.style.transform = 'none'
+  }
+
+  const applyNodeRect = (id: string, rect: Rect, includeSize: boolean) => {
+    const node = document.querySelector(
+      `[data-stage-id="${id}"]`,
+    ) as HTMLElement | null
+    if (!node) return
+    node.style.left = `${rect.x}px`
+    node.style.top = `${rect.y}px`
+    if (includeSize) {
+      node.style.width = `${rect.width}px`
+      node.style.height = `${rect.height}px`
+    }
+  }
+
+  const clearNodePreview = (id: string, includeSize: boolean) => {
+    const node = document.querySelector(
+      `[data-stage-id="${id}"]`,
+    ) as HTMLElement | null
+    if (!node) return
+    node.style.left = ''
+    node.style.top = ''
+    if (includeSize) {
+      node.style.width = ''
+      node.style.height = ''
     }
   }
 
@@ -106,40 +198,28 @@ export function SelectionOverlay({ step, frameRef }: SelectionOverlayProps) {
       if (drag.kind === 'move') {
         const dx = cur.x - drag.startX
         const dy = cur.y - drag.startY
-        // 시각적으로만 미리 보기 — 실제 commit은 mouseup
-        const s = getScale()
-        for (const [id] of drag.rects) {
-          const el = overlayRef.current?.querySelector(
-            `[data-sel-id="${id}"]`,
-          ) as HTMLElement | null
-          if (el) {
-            el.style.transform = `translate(${dx * s}px, ${dy * s}px)`
-          }
+        const nextRendered = new Map<string, Rect>()
+        for (const [id, r] of drag.renderedRects) {
+          nextRendered.set(id, { ...r, x: r.x + dx, y: r.y + dy })
         }
-        // 캔버스의 실제 노드도 옮겨 보여줌(미리 보기)
-        for (const [id, r] of drag.rects) {
-          const node = document.querySelector(
-            `[data-stage-id="${id}"]`,
-          ) as HTMLElement | null
-          if (node) {
-            node.style.left = `${r.x + dx}px`
-            node.style.top = `${r.y + dy}px`
-          }
+        for (const [id, next] of nextRendered) {
+          applyOverlayRect(id, next)
+        }
+        for (const [id, r] of drag.localRects) {
+          applyNodeRect(id, { ...r, x: r.x + dx, y: r.y + dy }, false)
         }
       } else if (drag.kind === 'resize') {
         const dx = cur.x - drag.startX
         const dy = cur.y - drag.startY
-        for (const [id, r] of drag.rects) {
-          const next = applyResize(r, drag.handle, dx, dy)
-          const node = document.querySelector(
-            `[data-stage-id="${id}"]`,
-          ) as HTMLElement | null
-          if (node) {
-            node.style.left = `${next.x}px`
-            node.style.top = `${next.y}px`
-            node.style.width = `${next.width}px`
-            node.style.height = `${next.height}px`
-          }
+        const nextRendered = new Map<string, Rect>()
+        for (const [id, r] of drag.renderedRects) {
+          nextRendered.set(id, applyResize(r, drag.handle, dx, dy))
+        }
+        for (const [id, next] of nextRendered) {
+          applyOverlayRect(id, next)
+        }
+        for (const [id, r] of drag.localRects) {
+          applyNodeRect(id, applyResize(r, drag.handle, dx, dy), true)
         }
       } else if (drag.kind === 'marquee') {
         setDrag({
@@ -157,25 +237,25 @@ export function SelectionOverlay({ step, frameRef }: SelectionOverlayProps) {
       if (drag.kind === 'move') {
         const dx = cur.x - drag.startX
         const dy = cur.y - drag.startY
-        // 미리 보기 transform 정리
-        for (const [id] of drag.rects) {
-          const el = overlayRef.current?.querySelector(
-            `[data-sel-id="${id}"]`,
-          ) as HTMLElement | null
-          if (el) el.style.transform = ''
-        }
-        // commit
         if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
-          for (const [id, r] of drag.rects) {
-            await commitRect(id, step, { ...r, x: r.x + dx, y: r.y + dy })
-          }
+          await Promise.all(
+            Array.from(drag.localRects.entries()).map(([id, r]) =>
+              commitRect(id, step, { ...r, x: r.x + dx, y: r.y + dy }),
+            ),
+          )
+        } else {
+          for (const id of drag.localRects.keys()) clearNodePreview(id, false)
         }
       } else if (drag.kind === 'resize') {
         const dx = cur.x - drag.startX
         const dy = cur.y - drag.startY
-        for (const [id, r] of drag.rects) {
-          const next = applyResize(r, drag.handle, dx, dy)
-          await commitRect(id, step, next)
+        await Promise.all(
+          Array.from(drag.localRects.entries()).map(([id, r]) =>
+            commitRect(id, step, applyResize(r, drag.handle, dx, dy)),
+          ),
+        )
+        if (Math.abs(dx) <= 0.5 && Math.abs(dy) <= 0.5) {
+          for (const id of drag.localRects.keys()) clearNodePreview(id, true)
         }
       } else if (drag.kind === 'marquee') {
         // marquee 박스에 들어오는 element를 선택
@@ -187,7 +267,7 @@ export function SelectionOverlay({ step, frameRef }: SelectionOverlayProps) {
         if (sc) {
           const hits: string[] = []
           for (const el of sc.elements) {
-            const r = getRect(el)
+            const r = getRenderedCanvasRect(el)
             const cx = r.x + r.width / 2
             const cy = r.y + r.height / 2
             if (cx >= x1 && cx <= x2 && cy >= y1 && cy <= y2) {
@@ -195,6 +275,7 @@ export function SelectionOverlay({ step, frameRef }: SelectionOverlayProps) {
             }
           }
           if (hits.length > 0) setSelection(hits)
+          else clearSelection()
         }
       }
 
@@ -217,28 +298,58 @@ export function SelectionOverlay({ step, frameRef }: SelectionOverlayProps) {
     if (el) selected.push(el)
   }
 
+  const selectedIds = new Set(selected.map((el) => el.id))
+  const selectedRoots = selected.filter((el) => {
+    let cursor = el.parent_id
+    while (cursor) {
+      if (selectedIds.has(cursor)) return false
+      cursor = scene.elements.find((e) => e.id === cursor)?.parent_id ?? null
+    }
+    return true
+  })
+
   // 드래그 시작 핸들러
   const startMove = (e: React.MouseEvent) => {
     e.stopPropagation()
     e.preventDefault()
     const cur = screenToCanvas(e.clientX, e.clientY)
-    const rects = new Map<string, Rect>()
-    for (const el of selected) rects.set(el.id, getRect(el))
-    setDrag({ kind: 'move', startX: cur.x, startY: cur.y, rects })
+    const renderedRects = new Map<string, Rect>()
+    const localRects = new Map<string, Rect>()
+    for (const el of selectedRoots) {
+      renderedRects.set(el.id, getRenderedCanvasRect(el))
+      localRects.set(el.id, getLocalRect(el))
+    }
+    setDrag({ kind: 'move', startX: cur.x, startY: cur.y, renderedRects, localRects })
   }
 
   const startResize = (handle: HandleId) => (e: React.MouseEvent) => {
     e.stopPropagation()
     e.preventDefault()
     const cur = screenToCanvas(e.clientX, e.clientY)
-    const rects = new Map<string, Rect>()
-    for (const el of selected) rects.set(el.id, getRect(el))
-    setDrag({ kind: 'resize', handle, startX: cur.x, startY: cur.y, rects })
+    const renderedRects = new Map<string, Rect>()
+    const localRects = new Map<string, Rect>()
+    for (const el of selectedRoots) {
+      renderedRects.set(el.id, getRenderedCanvasRect(el))
+      localRects.set(el.id, getLocalRect(el))
+    }
+    setDrag({ kind: 'resize', handle, startX: cur.x, startY: cur.y, renderedRects, localRects })
   }
 
   // 빈 캔버스 클릭 → marquee
   const onBackgroundMouseDown = (e: React.MouseEvent) => {
     if (e.target !== e.currentTarget) return
+    const hitId = hitStageIdAtPoint(e.clientX, e.clientY)
+    if (hitId) {
+      if (e.shiftKey) {
+        const next = new Set(selection)
+        if (next.has(hitId)) next.delete(hitId)
+        else next.add(hitId)
+        setSelection(next)
+      } else {
+        setSelection([hitId])
+      }
+      return
+    }
     const cur = screenToCanvas(e.clientX, e.clientY)
     setDrag({
       kind: 'marquee',
@@ -259,6 +370,7 @@ export function SelectionOverlay({ step, frameRef }: SelectionOverlayProps) {
       }}
     >
       <div
+        ref={backgroundRef}
         className="pointer-events-auto absolute inset-0"
         onMouseDown={onBackgroundMouseDown}
         style={{ background: 'transparent' }}
@@ -274,8 +386,8 @@ export function SelectionOverlay({ step, frameRef }: SelectionOverlayProps) {
           pointerEvents: 'none',
         }}
       >
-        {selected.map((el) => {
-          const r = getRect(el)
+        {selectedRoots.map((el) => {
+          const r = getRenderedCanvasRect(el)
           return (
             <div
               key={el.id}

@@ -22,36 +22,107 @@ export type AnimatedValues = Partial<Record<AnimatableKey, number | string>>
  * 각 속성마다:
  *  - step에 정확히 키가 있으면 그 값
  *  - 없으면, step 이전의 가장 가까운 키 값 (없으면 step 이후의 가장 가까운 키 값)
+ *
+ * 호출자가 keyframes를 step 오름차순으로 정렬해서 넘기면 재정렬을 생략한다.
+ * (Stage에서 keyframesByElement Map을 만들 때 한 번만 정렬하면 됨)
  */
 export function computeValuesAt(
   keyframes: KeyframeRow[],
   step: number,
+  presorted = false,
 ): AnimatedValues {
-  if (keyframes.length === 0) return {}
+  const n = keyframes.length
+  if (n === 0) return {}
 
-  // 시간순 정렬
-  const sorted = [...keyframes].sort((a, b) => a.step - b.step)
+  const sorted = presorted
+    ? keyframes
+    : [...keyframes].sort((a, b) => a.step - b.step)
 
+  // single-sweep: 한 번 순회하면서 17개 키를 동시에 채운다.
+  //  - "step ≤ current"인 동안 모든 키의 best 후보를 갱신
+  //  - 그 이후에는 값이 비어 있는 키만 처음으로 만난 값으로 채워 (fallback)
   const result: AnimatedValues = {}
+  const cutoffEnd = (() => {
+    // step ≤ 인 마지막 인덱스 + 1 (bin search는 N 작아 의미없음)
+    let i = 0
+    while (i < n && sorted[i].step <= step) i++
+    return i
+  })()
 
-  for (const key of ANIMATABLE_KEYS) {
-    // 해당 속성에 키가 잡힌 키프레임만 추출
-    const withKey = sorted.filter((kf) => kf[key] !== null && kf[key] !== undefined)
-    if (withKey.length === 0) continue
-
-    // step 이하의 마지막 키프레임
-    let chosen = withKey[0]
-    for (const kf of withKey) {
-      if (kf.step <= step) chosen = kf
-      else break
+  // 1) step ≤ : 뒤에서 앞으로 훑되, 처음 만난 non-null만 채택 (≡ 가장 마지막 키 값)
+  for (let i = cutoffEnd - 1; i >= 0; i--) {
+    const kf = sorted[i]
+    for (let k = 0; k < ANIMATABLE_KEYS.length; k++) {
+      const key = ANIMATABLE_KEYS[k]
+      if (result[key] !== undefined) continue
+      const v = kf[key]
+      if (v !== null && v !== undefined) {
+        result[key] = v as number | string
+      }
     }
-    const v = chosen[key]
-    if (v !== null && v !== undefined) {
-      result[key] = v as number | string
+  }
+
+  // 2) step > : 앞에서 뒤로 훑으며 아직 못 채워진 키만 채움 (post-step fallback)
+  for (let i = cutoffEnd; i < n; i++) {
+    const kf = sorted[i]
+    for (let k = 0; k < ANIMATABLE_KEYS.length; k++) {
+      const key = ANIMATABLE_KEYS[k]
+      if (result[key] !== undefined) continue
+      const v = kf[key]
+      if (v !== null && v !== undefined) {
+        result[key] = v as number | string
+      }
     }
   }
 
   return result
+}
+
+/**
+ * 텍스트 컨텐츠 트랙. 보간 없이 step ≤ current 마지막 값.
+ * 키프레임에 text_content가 하나도 없으면 null.
+ */
+export function computeTextAt(
+  keyframes: KeyframeRow[],
+  step: number,
+  presorted = false,
+): string | null {
+  const sorted = presorted
+    ? keyframes
+    : [...keyframes].sort((a, b) => a.step - b.step)
+  let chosen: KeyframeRow | null = null
+  for (let i = 0; i < sorted.length; i++) {
+    const kf = sorted[i]
+    if (kf.text_content === null || kf.text_content === undefined) continue
+    if (kf.step <= step) chosen = kf
+    else break
+  }
+  return chosen?.text_content ?? null
+}
+
+/**
+ * 현재 step의 트랜지션을 결정할 키프레임을 찾는다.
+ * 즉 "이 step으로 들어오는 transition"을 정의하는 키프레임.
+ *
+ * - step에 정확히 키가 있으면 그것
+ * - 없으면, step 이전의 가장 가까운 키
+ * - duration/ease 컬럼이 NULL이 아닌 키만 고려
+ */
+export function findTransitionKeyframe(
+  keyframes: KeyframeRow[],
+  step: number,
+  presorted = false,
+): KeyframeRow | null {
+  const sorted = presorted
+    ? keyframes
+    : [...keyframes].sort((a, b) => a.step - b.step)
+  let chosen: KeyframeRow | null = null
+  for (let i = 0; i < sorted.length; i++) {
+    const kf = sorted[i]
+    if (kf.step <= step) chosen = kf
+    else break
+  }
+  return chosen
 }
 
 /**
