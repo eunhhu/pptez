@@ -11,12 +11,12 @@ export default defineConfig({
     tailwindcss(),
   ],
   server: {
-    allowedHosts: ["*"],
+    allowedHosts: true,
     host: true,
     port: 5173,
     strictPort: false,
   },
   preview: {
-    allowedHosts: ["*"]
+    allowedHosts: true
   }
 })
