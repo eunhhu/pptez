@@ -1,19 +1,46 @@
-import { useCallback, useEffect, useState } from 'react'
-import { Stage, TOTAL_STEPS } from './timeline'
+import { useEffect, useCallback } from 'react'
+import { Stage } from './scene/Stage'
+import {
+  useScene,
+  useTotalSteps,
+  useStep,
+  useEditMode,
+  setEditMode,
+} from './scene/store'
+import { useCanvasScale } from './scene/useCanvasScale'
+import { EditorRoot } from './editor/EditorRoot'
 
 function App() {
-  const [step, setStep] = useState(0)
+  const [editMode] = useEditMode()
 
-  const next = useCallback(() => {
-    setStep((s) => Math.min(s + 1, TOTAL_STEPS - 1))
-  }, [])
+  if (editMode) {
+    return <EditorRoot />
+  }
+  return <PlayView />
+}
 
-  const prev = useCallback(() => {
-    setStep((s) => Math.max(s - 1, 0))
-  }, [])
+function PlayView() {
+  const scene = useScene()
+  const total = useTotalSteps()
+  const [step, setStep] = useStep()
+  const frameRef = useCanvasScale<HTMLDivElement>()
+
+  const next = useCallback(() => setStep(step + 1), [step, setStep])
+  const prev = useCallback(() => setStep(step - 1), [step, setStep])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // input/textarea 안에서는 무시
+      const target = e.target as HTMLElement | null
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return
+      }
+
       switch (e.key) {
         case 'ArrowRight':
         case 'ArrowDown':
@@ -34,7 +61,13 @@ function App() {
           break
         case 'End':
           e.preventDefault()
-          setStep(TOTAL_STEPS - 1)
+          setStep(total - 1)
+          break
+        case 'e':
+        case 'E':
+          // 편집 모드 진입 (dev에서만 가능 — prod에서도 진입은 되지만 mutation은 401)
+          e.preventDefault()
+          setEditMode(true)
           break
         case 'f':
         case 'F':
@@ -48,24 +81,22 @@ function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [next, prev])
+  }, [next, prev, setStep, total])
 
   return (
     <div className="slide-stage">
-      {/* 16:9 콘텐츠 프레임 — 여긴 오직 프레젠테이션 화면 */}
-      <div className="slide-frame">
+      <div ref={frameRef} className="slide-frame">
         <Stage step={step} />
       </div>
 
-      {/* UI 오버레이 — 프레임 바깥, 뷰포트 기준 고정 */}
       <div className="pointer-events-none fixed bottom-4 left-1/2 z-50 -translate-x-1/2 text-xs text-zinc-500 tabular-nums">
-        {step + 1} / {TOTAL_STEPS}
+        {scene ? `${step + 1} / ${total}` : '…'}
       </div>
 
       <div className="pointer-events-none fixed bottom-0 left-0 right-0 z-50 h-0.5 bg-white/5">
         <div
           className="h-full bg-sky-500 transition-[width] duration-500 ease-out"
-          style={{ width: `${((step + 1) / TOTAL_STEPS) * 100}%` }}
+          style={{ width: `${((step + 1) / total) * 100}%` }}
         />
       </div>
     </div>
