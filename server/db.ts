@@ -1,25 +1,37 @@
 /**
  * SQLite 초기화 및 스키마.
  *
- * - 단일 프레젠테이션 = 단일 db 파일 (`.omc/presentation.db`)
+ * - 단일 PPTEZ 프로젝트 = 단일 db 파일 (`.omc/pptez.db`)
  * - bun:sqlite 사용 (의존성 0)
  * - 노드 트리 (frame/text/image), 스파스 키프레임, 에셋, 메타
  */
 
 import { Database } from 'bun:sqlite'
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, renameSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 
 // bun:sqlite의 db.run/db.query 가변인자에 들어갈 수 있는 값
 type SqliteParam = string | number | bigint | boolean | null | Uint8Array
 
-const DB_PATH = resolve(process.cwd(), '.omc/presentation.db')
+const DB_PATH = resolve(process.cwd(), '.omc/pptez.db')
+const LEGACY_DB_PATH = resolve(process.cwd(), '.omc/presentation.db')
 
 let _db: Database | null = null
 
 export function getDb(): Database {
   if (_db) return _db
   mkdirSync(dirname(DB_PATH), { recursive: true })
+  // 구 파일명 마이그레이션: presentation.db → pptez.db (한 번만)
+  if (!existsSync(DB_PATH) && existsSync(LEGACY_DB_PATH)) {
+    renameSync(LEGACY_DB_PATH, DB_PATH)
+    // WAL 사이드카도 같이 옮김
+    for (const suffix of ['-wal', '-shm']) {
+      const from = LEGACY_DB_PATH + suffix
+      const to = DB_PATH + suffix
+      if (existsSync(from)) renameSync(from, to)
+    }
+    console.log('[pptez] migrated .omc/presentation.db → .omc/pptez.db')
+  }
   const db = new Database(DB_PATH, { create: true })
   db.exec('PRAGMA journal_mode = WAL;')
   db.exec('PRAGMA foreign_keys = ON;')

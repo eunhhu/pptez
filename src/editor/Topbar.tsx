@@ -53,7 +53,7 @@ export function Topbar({ step, total, setStep }: TopbarProps) {
   return (
     <div className="flex h-12 shrink-0 items-center justify-between border-b border-white/10 bg-zinc-900 px-4 text-sm">
       <div className="flex items-center gap-3">
-        <span className="font-semibold tracking-tight text-zinc-100">PPT/EZ</span>
+        <span className="font-semibold tracking-tight text-zinc-100">PPTEZ</span>
         <span className="text-zinc-500">Editor</span>
         <div className="ml-2 flex items-center gap-1">
           <button

@@ -82,9 +82,9 @@ function extFromFilename(filename: string): string {
   return e || 'bin'
 }
 
-export function presentationApi(): Plugin {
+export function pptezApi(): Plugin {
   return {
-    name: 'presentation-api',
+    name: 'pptez-api',
     // 빌드 시작 시 scene.json을 public/에 떨어뜨려서 dist에 자동 포함되게 한다.
     // 에셋 파일은 이미 public/assets/에 있으니 vite가 같이 복사한다.
     buildStart() {
@@ -96,9 +96,9 @@ export function presentationApi(): Plugin {
           resolve(publicDir, 'scene.json'),
           JSON.stringify(scene),
         )
-        console.log('[presentation-api] exported public/scene.json')
+        console.log('[pptez] exported public/scene.json')
       } catch (e) {
-        console.warn('[presentation-api] scene.json export failed:', (e as Error).message)
+        console.warn('[pptez] scene.json export failed:', (e as Error).message)
       }
     },
     configureServer(server) {
@@ -213,7 +213,7 @@ export function presentationApi(): Plugin {
 
           return sendError(res, 404, 'not found')
         } catch (e) {
-          console.error('[presentation-api]', e)
+          console.error('[pptez]', e)
           return sendError(res, 500, (e as Error).message)
         }
       })
