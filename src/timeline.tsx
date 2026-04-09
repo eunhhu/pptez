@@ -502,7 +502,7 @@ function CodeRow({
 }) {
   const isFocused = focus !== null && line.tag === focus
   const dim = focus !== null && !isFocused && line.tag !== 'none'
-  const targetOpacity = dim ? 0.22 : 1
+  const targetOpacity = dim ? 0.6 : 1
 
   return (
     <motion.div
