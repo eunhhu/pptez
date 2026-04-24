@@ -2,10 +2,33 @@
   "name": "pptez",
   "private": true,
   "version": "0.0.0",
+  "description": "PPTEZ — a Bun + React + Vite timeline-based presentation editor with keyframe animation and SQLite persistence.",
   "type": "module",
+  "author": "eunhhu",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/eunhhu/pptez.git"
+  },
+  "bugs": {
+    "url": "https://github.com/eunhhu/pptez/issues"
+  },
+  "homepage": "https://github.com/eunhhu/pptez#readme",
+  "keywords": [
+    "presentation",
+    "slides",
+    "animation",
+    "keyframe",
+    "timeline",
+    "react",
+    "vite",
+    "framer-motion",
+    "bun"
+  ],
   "scripts": {
     "dev": "bun --bun vite",
     "build": "tsc -b && bun --bun vite build",
+    "typecheck": "tsc -b --force",
     "lint": "eslint .",
     "preview": "bun --bun vite preview"
   },
